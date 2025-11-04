@@ -1,0 +1,52 @@
+# Core dependencies
+fastapi==0.120.4
+uvicorn[standard]==0.32.1
+python-multipart==0.0.9
+pydantic==2.9.2
+
+# PyTorch and ML frameworks
+torch==2.4.0
+torchaudio==2.4.0
+torchvision==0.19.0
+transformers==4.46.3
+accelerate==1.1.1
+
+# Audio processing
+soundfile==0.12.1
+librosa==0.10.2
+scipy==1.13.1
+numpy==1.26.4
+praat-parselmouth==0.4.6
+
+# Speech processing
+speechbrain==1.0.3
+
+# Subtitle processing
+srt==3.5.3
+
+# Utilities
+pyyaml==6.0.2
+pillow==11.0.0
+tqdm==4.66.5
+huggingface-hub==0.26.2
+
+# F5-TTS dependencies
+vocos==0.1.0  # Latest available version (0.4.1 doesn't exist)
+einops==0.8.0
+ema-pytorch==0.7.7
+
+# Seed-VC dependencies (if needed)
+# Note: Some dependencies from seed-vc are already listed above
+
+# Additional utilities
+ffmpeg-python==0.2.0
+requests==2.32.3  # For testing
+
+# Seed-VC specific dependencies
+munch==4.0.0
+pydub==0.25.1
+
+# Note: You may need to install ffmpeg system package separately:
+# Ubuntu/Debian: apt-get install ffmpeg
+# macOS: brew install ffmpeg
+
