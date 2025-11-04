@@ -104,13 +104,14 @@ def run_dubbing_pipeline(job_id: str, video_path: Path, srt_path: Path, output_d
         # Update status
         eval_report = output_dir / f"{job_id}_evaluation_report.md"
         if config.OUTPUT_VIDEO.exists():
-            # Copy evaluation report if it exists
+            # Rename evaluation report if it exists (avoid duplicate files)
             # The evaluator saves to OUTPUT_DIR, check there
             eval_source = config.OUTPUT_DIR / "evaluation_report_seedvc.md"
             if not eval_source.exists():
                 eval_source = PROJECT_ROOT / "outputs" / "evaluation_report_seedvc.md"
             if eval_source.exists():
-                shutil.copy(eval_source, eval_report)
+                # Rename/move instead of copy to avoid duplicates
+                eval_source.rename(eval_report)
             
             # Use relative paths for API responses
             output_video_rel = f"/app/outputs/{job_id}/{job_id}_dubbed.mp4"
