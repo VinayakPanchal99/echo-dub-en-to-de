@@ -202,7 +202,10 @@ class F5TTSSynthesizer:
         
         current_duration = len(audio) / sample_rate
         speed_factor = current_duration / target_duration
-        speed_factor_clipped = np.clip(speed_factor, 0.7, 1.5)
+        
+        # Use config range for speed adjustment
+        min_speed, max_speed = self.config.SPEED_ADJUSTMENT_RANGE
+        speed_factor_clipped = np.clip(speed_factor, min_speed, max_speed)
         
         target_samples = int(target_duration * sample_rate)
         adjusted_audio = signal.resample(audio, target_samples)
@@ -288,7 +291,9 @@ class F5TTSSynthesizer:
                 current_rms = np.sqrt(np.mean(seg['audio']**2))
                 if current_rms > 0:
                     gain = target_rms / current_rms
-                    gain = np.clip(gain, 0.5, 2.0)
+                    # Use config range for volume gain
+                    min_gain, max_gain = self.config.VOLUME_GAIN_RANGE
+                    gain = np.clip(gain, min_gain, max_gain)
                     seg['audio'] = seg['audio'] * gain
         
         return segments

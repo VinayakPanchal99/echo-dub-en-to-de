@@ -198,6 +198,7 @@ curl -X POST "http://localhost:8000/dub" \
   "status": "queued",
   "message": "Job queued for processing",
   "output_video": null,
+  "output_audio": null,
   "evaluation_report": null
 }
 ```
@@ -215,6 +216,7 @@ curl "http://localhost:8000/status/{job_id}"
   "status": "completed",
   "message": "Pipeline completed successfully",
   "output_video": "/app/outputs/31cd8bed-ae17-4424-b985-f047b1d193cc/31cd8bed-ae17-4424-b985-f047b1d193cc_dubbed.mp4",
+  "output_audio": "/app/outputs/31cd8bed-ae17-4424-b985-f047b1d193cc/31cd8bed-ae17-4424-b985-f047b1d193cc_dubbed_audio.wav",
   "evaluation_report": "/app/outputs/31cd8bed-ae17-4424-b985-f047b1d193cc/31cd8bed-ae17-4424-b985-f047b1d193cc_evaluation_report.md"
 }
 ```
@@ -231,13 +233,19 @@ curl "http://localhost:8000/status/{job_id}"
 curl "http://localhost:8000/download/{job_id}/video" -o output.mp4
 ```
 
-#### 4. Download Evaluation Report
+#### 4. Download Dubbed Audio
+
+```bash
+curl "http://localhost:8000/download/{job_id}/audio" -o dubbed_audio.wav
+```
+
+#### 5. Download Evaluation Report
 
 ```bash
 curl "http://localhost:8000/download/{job_id}/report" -o evaluation_report.md
 ```
 
-#### 5. Delete Job
+#### 6. Delete Job
 
 ```bash
 curl -X DELETE "http://localhost:8000/job/{job_id}"
@@ -255,6 +263,7 @@ curl "http://localhost:8000/"
 outputs/
 └── {job_id}/
     ├── {job_id}_dubbed.mp4              # Final dubbed video
+    ├── {job_id}_dubbed_audio.wav        # Dubbed audio file
     └── {job_id}_evaluation_report.md    # Quality evaluation report
 ```
 
@@ -268,13 +277,21 @@ outputs/
 - **PyTorch**: Deep learning framework
 - **Transformers**: Hugging Face transformers library
 
-## Issue that can be Ignored
+## Notes and Limitations
 
-1. **pip dependency error**: 
+1. Pip dependency error: This error can be ignored since the descript-audio tools is not being used.
 ```
 ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
 descript-audiotools 0.7.2 requires protobuf<3.20,>=3.9.2, but you have protobuf 3.20.3 which is incompatible.
 ```
+
+2. Language Restriction: Currently limited to English-to-German translation only. The system is not designed for other language pairs. 
+
+3. Hardware Dependency: While CPU processing is supported, optimal performance requires a CUDA-capable GPU. Processing times may be significantly longer without GPU acceleration.
+
+4. Sequential Processing: The pipeline operates as a single-threaded job queue with sequential stages, potentially creating bottlenecks for batch processing multiple videos simultaneously.
+
+5. Dependency Complexity: Requires external cloning and installation of F5-TTS and Seed-VC repositories, plus platform-specific requirements (Mac-specific for macOS), adding setup complexity
 
 ## License
 

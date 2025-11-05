@@ -40,7 +40,7 @@ class Config:
         self.EXTRACTED_AUDIO = self.TEMP_DIR / "original_audio.wav"
         self.REFERENCE_AUDIO = self.TEMP_DIR / "reference_speaker.wav"
         self.TRANSLATED_SRT = self.TEMP_DIR / "subtitles_de.srt"
-        self.TTS_AUDIO = self.TEMP_DIR / "tts_audio.wav"  # Audio before voice conversion
+        self.TTS_AUDIO = self.TEMP_DIR / "tts_audio.wav"  # Audio before voice conversion (optional, for debugging)
         self.DUBBED_AUDIO = self.TEMP_DIR / "dubbed_audio.wav"
         
         # Translation
@@ -74,15 +74,16 @@ class Config:
         self.CROSS_FADE_DURATION = 0.05  # Cross-fade between segments (seconds) for smoother transitions
         
         # Audio Settings
-        # Final output sample rate for video (standard video audio is 48000Hz)
-        # Pipeline: F5-TTS (24000Hz) -> Seed-VC (22050Hz) -> Upsample to 48000Hz for video
-        self.FINAL_SAMPLE_RATE = 48000  # Standard video audio sample rate
+        # Final output sample rate - keep at Seed-VC native rate to avoid unnecessary upsampling
+        # Pipeline: F5-TTS (24000Hz) -> Seed-VC (22050Hz) -> Keep at 22050Hz (FFmpeg supports this)
+        self.FINAL_SAMPLE_RATE = 22050  # Match Seed-VC output rate (no upsampling needed)
         
         # Processing Settings
         # Check environment variable first (useful for Docker)
         preferred_device = os.environ.get('DEVICE')
         self.DEVICE = get_device(preferred_device)  # Auto-detect device or use DEVICE env var
-        self.SPEED_ADJUSTMENT_RANGE = (0.5, 2.0)
+        self.SPEED_ADJUSTMENT_RANGE = (0.7, 1.5)  # Speed adjustment range for timing alignment
+        self.VOLUME_GAIN_RANGE = (0.5, 2.0)  # Volume gain range for normalization
         
         # Multi-threading Settings (can be overridden via environment variables)
         self.ENABLE_MULTITHREADING = os.environ.get('ENABLE_MULTITHREADING', 'true').lower() == 'true'

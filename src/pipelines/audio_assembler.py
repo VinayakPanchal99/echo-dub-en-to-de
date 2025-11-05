@@ -97,19 +97,34 @@ class AudioAssembler:
         
         # Calculate coverage statistics
         coverage_percent = (coverage_samples / total_samples) * 100 if total_samples > 0 else 0
+        silence_percent = 100 - coverage_percent
+        
+        # Compile assembly statistics
+        assembly_stats = {
+            'total_segments': len(segments),
+            'total_duration': total_duration,
+            'audio_coverage_duration': total_audio_duration,
+            'coverage_percent': coverage_percent,
+            'silence_percent': silence_percent,
+            'total_samples': total_samples,
+            'coverage_samples': coverage_samples,
+            'sample_rate': sample_rate,
+            'cross_fade_duration': self.config.CROSS_FADE_DURATION,
+            'has_low_coverage': coverage_percent < 50
+        }
         
         print(f"\nAssembly Statistics:")
         print(f"Total duration: {total_duration:.2f}s")
         print(f"Audio coverage: {total_audio_duration:.2f}s")
         print(f"Coverage: {coverage_percent:.1f}%")
-        print(f"Silence: {100 - coverage_percent:.1f}%")
+        print(f"Silence: {silence_percent:.1f}%")
         
         if coverage_percent < 50:
             print(f"WARNING: Less than 50% audio coverage - video will have long silences")
         
         print(f"Audio assembled: {total_duration:.2f}s")
         
-        return final_audio, sample_rate
+        return final_audio, sample_rate, assembly_stats
     
     def save_audio(self, audio, output_path, sample_rate):
         """Save assembled audio"""
