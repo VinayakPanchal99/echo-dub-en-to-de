@@ -293,6 +293,8 @@ descript-audiotools 0.7.2 requires protobuf<3.20,>=3.9.2, but you have protobuf 
 
 5. Dependency Complexity: Requires external cloning and installation of F5-TTS and Seed-VC repositories, plus platform-specific requirements (Mac-specific for macOS), adding setup complexity
 
+6. Lip-Sync integration: Lip-sync is not integrated in this pipeline but model like `WaV2lip` can be added to the pipeline.
+
 ## License
 
 See individual component licenses (can be viewed after cloning these repo):
