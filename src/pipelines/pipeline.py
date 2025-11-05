@@ -89,7 +89,7 @@ class VideoDubbingPipeline:
         vc_results = self.voice_converter.convert_all_segments(tts_results, reference_path)
         
         # Step 6: Audio assembly
-        final_audio, sample_rate = self.audio_assembler.assemble_audio(vc_results, duration)
+        final_audio, sample_rate, assembly_stats = self.audio_assembler.assemble_audio(vc_results, duration)
         self.audio_assembler.save_audio(final_audio, self.config.DUBBED_AUDIO, sample_rate)
         
         # Step 7: Video merge
@@ -100,15 +100,10 @@ class VideoDubbingPipeline:
         )
         
         # Step 8: Quality evaluation and report generation
-        evaluation_report = self.evaluator.generate_evaluation_report(segments=vc_results)
-        
-        print("\n" + "="*70)
-        print("PIPELINE COMPLETE")
-        print("="*70)
-        print(f"Output Video: {self.config.OUTPUT_VIDEO}")
-        print(f"Evaluation Report: {evaluation_report}")
-        print(f"Translated SRT: {self.config.TRANSLATED_SRT}")
-        print("="*70 + "\n")
+        evaluation_report = self.evaluator.generate_evaluation_report(
+            segments=vc_results,
+            assembly_stats=assembly_stats
+        )
 
 # ============================================================================
 # ENTRY POINT

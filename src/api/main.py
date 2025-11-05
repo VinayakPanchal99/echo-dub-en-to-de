@@ -63,6 +63,7 @@ class JobStatus(BaseModel):
     status: str
     message: str
     output_video: Optional[str] = None
+    output_audio: Optional[str] = None
     evaluation_report: Optional[str] = None
 
 
@@ -103,7 +104,13 @@ def run_dubbing_pipeline(job_id: str, video_path: Path, srt_path: Path, output_d
         
         # Update status
         eval_report = output_dir / f"{job_id}_evaluation_report.md"
+        output_audio = output_dir / f"{job_id}_dubbed_audio.wav"
+        
         if config.OUTPUT_VIDEO.exists():
+            # Copy dubbed audio to output directory
+            if config.DUBBED_AUDIO.exists():
+                shutil.copy2(config.DUBBED_AUDIO, output_audio)
+            
             # Rename evaluation report if it exists (avoid duplicate files)
             # The evaluator saves to OUTPUT_DIR, check there
             eval_source = config.OUTPUT_DIR / "evaluation_report_seedvc.md"
@@ -113,14 +120,28 @@ def run_dubbing_pipeline(job_id: str, video_path: Path, srt_path: Path, output_d
                 # Rename/move instead of copy to avoid duplicates
                 eval_source.rename(eval_report)
             
+            # Print final summary after pipeline completes
+            print("\n" + "="*70)
+            print("PIPELINE COMPLETE")
+            print("="*70)
+            print(f"Output Video: {config.OUTPUT_VIDEO}")
+            if output_audio.exists():
+                print(f"Output Audio: {output_audio}")
+            if eval_report.exists():
+                print(f"Evaluation Report: {eval_report}")
+            print(f"Translated SRT: {config.TRANSLATED_SRT}")
+            print("="*70 + "\n")
+            
             # Use relative paths for API responses
             output_video_rel = f"/app/outputs/{job_id}/{job_id}_dubbed.mp4"
+            output_audio_rel = f"/app/outputs/{job_id}/{job_id}_dubbed_audio.wav" if output_audio.exists() else None
             eval_report_rel = f"/app/outputs/{job_id}/{job_id}_evaluation_report.md" if eval_report.exists() else None
             
             job_status[job_id] = {
                 "status": "completed",
                 "message": "Pipeline completed successfully",
                 "output_video": output_video_rel,
+                "output_audio": output_audio_rel,
                 "evaluation_report": eval_report_rel
             }
         else:
@@ -128,6 +149,7 @@ def run_dubbing_pipeline(job_id: str, video_path: Path, srt_path: Path, output_d
                 "status": "failed",
                 "message": "Pipeline completed but output video not found",
                 "output_video": None,
+                "output_audio": None,
                 "evaluation_report": None
             }
     except Exception as e:
@@ -135,6 +157,7 @@ def run_dubbing_pipeline(job_id: str, video_path: Path, srt_path: Path, output_d
             "status": "failed",
             "message": f"Error: {str(e)}",
             "output_video": None,
+            "output_audio": None,
             "evaluation_report": None
         }
 
@@ -160,10 +183,10 @@ async def dub_video(
     Returns a job_id to track processing status
     """
     # Validate file types
-    if not video_file.filename.endswith(('.mp4', '.MP4')):
+    if not video_file.filename or not video_file.filename.endswith(('.mp4', '.MP4')):
         raise HTTPException(status_code=400, detail="Video file must be MP4")
     
-    if not srt_file.filename.endswith(('.srt', '.SRT')):
+    if not srt_file.filename or not srt_file.filename.endswith(('.srt', '.SRT')):
         raise HTTPException(status_code=400, detail="Subtitle file must be SRT")
     
     # Generate unique job ID
@@ -193,6 +216,7 @@ async def dub_video(
         "status": "queued",
         "message": "Job queued for processing",
         "output_video": None,
+        "output_audio": None,
         "evaluation_report": None
     }
     
@@ -204,6 +228,7 @@ async def dub_video(
         status="queued",
         message="Job queued for processing",
         output_video=None,
+        output_audio=None,
         evaluation_report=None
     )
 
@@ -220,6 +245,7 @@ async def get_status(job_id: str):
         status=status["status"],
         message=status["message"],
         output_video=status.get("output_video"),
+        output_audio=status.get("output_audio"),
         evaluation_report=status.get("evaluation_report")
     )
 
@@ -249,6 +275,34 @@ async def download_video(job_id: str):
         path=str(video_path),
         media_type="video/mp4",
         filename=f"{job_id}_dubbed.mp4"
+    )
+
+
+@app.get("/download/{job_id}/audio")
+async def download_audio(job_id: str):
+    """Download the dubbed audio file"""
+    if job_id not in job_status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    status = job_status[job_id]
+    if status["status"] != "completed" or not status.get("output_audio"):
+        raise HTTPException(status_code=404, detail="Audio not ready yet")
+    
+    # Handle both absolute and relative paths
+    audio_path_str = status["output_audio"]
+    if audio_path_str.startswith("/app/"):
+        # Relative path - convert to absolute
+        audio_path = PROJECT_ROOT / audio_path_str.replace("/app/", "")
+    else:
+        audio_path = Path(audio_path_str)
+    
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    
+    return FileResponse(
+        path=str(audio_path),
+        media_type="audio/wav",
+        filename=f"{job_id}_dubbed_audio.wav"
     )
 
 

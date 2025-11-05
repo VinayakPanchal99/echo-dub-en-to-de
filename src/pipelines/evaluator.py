@@ -1,20 +1,9 @@
 """
 Quality evaluation module
 """
-import json
-import warnings
-from datetime import timedelta
-from pathlib import Path
-
 import numpy as np
 import soundfile as sf
-import torch
-import torchaudio
-
-# Suppress SpeechBrain warnings that are not critical
-# These are deprecation warnings from SpeechBrain's internal code
-warnings.filterwarnings('ignore', message='.*torch\.cuda\.amp\.custom_fwd.*', category=FutureWarning)
-warnings.filterwarnings('ignore', message='.*weights_only.*', category=FutureWarning)
+from typing import List, Dict, Optional, Tuple
 
 class QualityEvaluator:
     def __init__(self, config):
@@ -22,51 +11,43 @@ class QualityEvaluator:
         self.speaker_encoder = None
         
     def _load_speaker_encoder(self):
-        """Load speaker verification model for similarity computation"""
+        """Load speaker verification model for similarity computation using Resemblyzer"""
         if self.speaker_encoder is None:
             try:
-                # Suppress SpeechBrain warnings during model loading
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', category=UserWarning)
-                    warnings.filterwarnings('ignore', message='.*torch\.cuda\.amp\.custom_fwd.*', category=FutureWarning)
-                    warnings.filterwarnings('ignore', message='.*weights_only.*', category=FutureWarning)
-                    
-                    from speechbrain.pretrained import EncoderClassifier
-                    print(f"\nLoading speaker verification model...")
-                    self.speaker_encoder = EncoderClassifier.from_hparams(
-                        source="speechbrain/spkrec-ecapa-voxceleb",
-                        savedir="temp/speaker_encoder"
-                    )
+                from resemblyzer import VoiceEncoder
+                print(f"\nLoading speaker verification model (Resemblyzer)...")
+                self.speaker_encoder = VoiceEncoder()
                 print(f"Speaker encoder loaded")
             except ImportError:
-                print(f"WARNING: SpeechBrain not installed")
-                print(f"Install with: pip install speechbrain")
+                print(f"WARNING: Resemblyzer not installed")
+                print(f"Install with: pip install resemblyzer")
                 self.speaker_encoder = None
             except Exception as e:
                 print(f"WARNING: Could not load speaker encoder: {e}")
                 self.speaker_encoder = None
     
     def compute_speaker_similarity(self, original_audio_path, dubbed_audio_path):
-        """Compute cosine similarity between original and dubbed audio"""
+        """Compute cosine similarity between original and dubbed audio using Resemblyzer"""
         try:
             self._load_speaker_encoder()
             
             if self.speaker_encoder is None:
                 return None, None, "Speaker encoder not available"
             
-            original, sr1 = sf.read(str(original_audio_path))
-            dubbed, sr2 = sf.read(str(dubbed_audio_path))
+            from resemblyzer import preprocess_wav
             
-            emb_original = self.speaker_encoder.encode_batch(
-                torch.FloatTensor(original).unsqueeze(0)
-            )
-            emb_dubbed = self.speaker_encoder.encode_batch(
-                torch.FloatTensor(dubbed).unsqueeze(0)
-            )
+            # Load and preprocess audio files
+            original_wav = preprocess_wav(str(original_audio_path))
+            dubbed_wav = preprocess_wav(str(dubbed_audio_path))
             
-            similarity = torch.nn.functional.cosine_similarity(
-                emb_original, emb_dubbed
-            ).item()
+            # Get embeddings
+            emb_original = self.speaker_encoder.embed_utterance(original_wav)
+            emb_dubbed = self.speaker_encoder.embed_utterance(dubbed_wav)
+            
+            # Compute cosine similarity
+            similarity = np.dot(emb_original, emb_dubbed) / (
+                np.linalg.norm(emb_original) * np.linalg.norm(emb_dubbed)
+            )
             
             return similarity, similarity, None
             
@@ -112,7 +93,47 @@ class QualityEvaluator:
             print(f"WARNING: Could not compute audio quality: {e}")
             return None
     
-    def generate_evaluation_report(self, segments=None):
+    def compute_translation_metrics(self, segments: List[Dict]) -> Dict:
+        """Compute translation quality metrics"""
+        if not segments:
+            return {}
+        
+        metrics = {
+            'total_segments': len(segments),
+            'avg_en_length': 0,
+            'avg_de_length': 0,
+            'avg_length_ratio': 0,
+            'avg_en_words': 0,
+            'avg_de_words': 0,
+            'avg_word_ratio': 0
+        }
+        
+        en_lengths = []
+        de_lengths = []
+        en_word_counts = []
+        de_word_counts = []
+        
+        for seg in segments:
+            en_text = seg.get('text_en', '')
+            de_text = seg.get('text_de', '')
+            
+            if en_text and de_text:
+                en_lengths.append(len(en_text))
+                de_lengths.append(len(de_text))
+                en_word_counts.append(len(en_text.split()))
+                de_word_counts.append(len(de_text.split()))
+        
+        if en_lengths:
+            metrics['avg_en_length'] = np.mean(en_lengths)
+            metrics['avg_de_length'] = np.mean(de_lengths)
+            metrics['avg_length_ratio'] = np.mean([de/en if en > 0 else 0 for de, en in zip(de_lengths, en_lengths)])
+            metrics['avg_en_words'] = np.mean(en_word_counts)
+            metrics['avg_de_words'] = np.mean(de_word_counts)
+            metrics['avg_word_ratio'] = np.mean([de/en if en > 0 else 0 for de, en in zip(de_word_counts, en_word_counts)])
+        
+        return metrics
+    
+    def generate_evaluation_report(self, segments=None, assembly_stats=None):
         """Generate comprehensive evaluation report"""
         print(f"\n{'='*70}")
         print(f"STEP 8: QUALITY EVALUATION & REPORT GENERATION")
@@ -121,101 +142,73 @@ class QualityEvaluator:
         report_path = self.config.OUTPUT_DIR / "evaluation_report_seedvc.md"
         
         # Compute metrics
-        print("Computing speaker similarity...")
-        full_similarity, segment_mean, error = self.compute_speaker_similarity(
-            self.config.EXTRACTED_AUDIO,
-            self.config.DUBBED_AUDIO
-        )
-        
         print("Computing timing alignment...")
         orig_dur, dubbed_dur, drift, drift_pct = self.compute_timing_alignment(
             self.config.EXTRACTED_AUDIO,
             self.config.DUBBED_AUDIO
         )
         
-        print("Computing audio quality metrics...")
-        orig_quality = self.compute_audio_quality_metrics(self.config.EXTRACTED_AUDIO)
-        dubbed_quality = self.compute_audio_quality_metrics(self.config.DUBBED_AUDIO)
+        # Compute speaker similarity
+        print("Computing speaker similarity...")
+        similarity, segment_mean, similarity_error = self.compute_speaker_similarity(
+            self.config.EXTRACTED_AUDIO,
+            self.config.DUBBED_AUDIO
+        )
+        
+        # Compute translation metrics
+        translation_metrics = {}
+        if segments:
+            print("Computing translation metrics...")
+            translation_metrics = self.compute_translation_metrics(segments)
         
         # Generate markdown report
         with open(str(report_path), 'w', encoding='utf-8') as f:
-            f.write("# Video Translation Evaluation Report (Seed-VC)\n\n")
-            f.write(f"**Generated**: {timedelta(seconds=0)}\n\n")
+            f.write("# Video Translation Evaluation Report\n\n")
             f.write(f"**Source**: {self.config.INPUT_VIDEO.name}\n")
             f.write(f"**Target Language**: German\n\n")
             
-            # Translation Quality
-            f.write("## Translation Quality\n\n")
-            if segments:
-                f.write(f"- **Total Segments**: {len(segments)}\n")
-                adjusted_count = sum(1 for seg in segments if seg.get('translation_info', {}).get('needs_adjustment', False))
-                f.write(f"- **Segments Needing Timing Adjustment**: {adjusted_count}/{len(segments)}\n")
-                
-                speed_factors = [seg.get('speed_factor', 1.0) for seg in segments if 'speed_factor' in seg]
-                if speed_factors:
-                    avg_speed = np.mean(speed_factors)
-                    f.write(f"- **Average Speed Factor**: {avg_speed:.2f}x\n")
-            f.write("\n")
+            # Translation Quality Metrics
+            if translation_metrics:
+                f.write("## Translation Quality (EN → DE)\n\n")
+                f.write(f"- **Total Segments**: {translation_metrics.get('total_segments', 0)}\n")
+                f.write(f"- **Avg English Words**: {translation_metrics.get('avg_en_words', 0):.1f}\n")
+                f.write(f"- **Avg German Words**: {translation_metrics.get('avg_de_words', 0):.1f}\n")
+                f.write(f"- **Word Ratio (DE/EN)**: {translation_metrics.get('avg_word_ratio', 0):.2f}x\n")
+                f.write("\n")
+            
+            # Assembly Statistics
+            if assembly_stats:
+                f.write("## Audio Assembly Statistics\n\n")
+                f.write(f"- **Total Segments Processed**: {assembly_stats.get('total_segments', 0)}\n")
+                f.write(f"- **Total Duration**: {assembly_stats.get('total_duration', 0):.2f}s\n")
+                f.write(f"- **Audio Coverage Duration**: {assembly_stats.get('audio_coverage_duration', 0):.2f}s\n")
+                f.write(f"- **Audio Coverage**: {assembly_stats.get('coverage_percent', 0):.1f}%\n")
+                f.write(f"- **Silence Percentage**: {assembly_stats.get('silence_percent', 0):.1f}%\n")
+                f.write(f"- **Sample Rate**: {assembly_stats.get('sample_rate', 0)} Hz\n")
+                f.write(f"- **Cross-Fade Duration**: {assembly_stats.get('cross_fade_duration', 0):.3f}s\n")
+                coverage_status = '✅ PASS' if assembly_stats.get('coverage_percent', 0) >= 50 else '⚠️ WARNING'
+                f.write(f"- **Coverage Status**: {coverage_status}\n")
+                if assembly_stats.get('has_low_coverage', False):
+                    f.write(f"  - ⚠️ Low coverage detected - video may have long silences\n")
+                f.write("\n")
             
             # Speaker Similarity
             f.write("## Speaker Similarity\n\n")
-            if full_similarity is not None:
-                f.write(f"- **Full Audio Cosine Similarity**: {full_similarity:.4f}\n")
-                f.write(f"- **Threshold (≥0.65)**: {'✅ PASS' if full_similarity >= 0.65 else '❌ FAIL'}\n")
-                if segment_mean is not None:
-                    f.write(f"- **Segment Mean**: {segment_mean:.4f}\n")
+            if similarity is not None:
+                f.write(f"- **Cosine Similarity**: {similarity:.4f}\n")
+                f.write(f"- **Threshold (≥0.65)**: {'✅ PASS' if similarity >= 0.65 else '❌ FAIL'}\n")
             else:
                 f.write(f"- **Status**: ⚠️ Not computed\n")
-                if error:
-                    f.write(f"- **Reason**: {error}\n")
+                if similarity_error:
+                    f.write(f"- **Reason**: {similarity_error}\n")
             f.write("\n")
             
             # Timing Alignment
-            f.write("## Timing Alignment\n\n")
             if orig_dur is not None:
-                f.write(f"- **Original Duration**: {orig_dur:.2f}s\n")
-                f.write(f"- **Synthesized Duration**: {dubbed_dur:.2f}s\n")
+                f.write("## Timing Alignment\n\n")
+                f.write(f"- **Duration**: {orig_dur:.2f}s → {dubbed_dur:.2f}s\n")
                 f.write(f"- **Drift**: {drift:+.2f}s ({drift_pct:+.1f}%)\n")
-                f.write(f"- **Threshold (±5%)**: {'✅ PASS' if abs(drift_pct) <= 5 else '❌ FAIL'}\n")
-            else:
-                f.write(f"- **Status**: ⚠️ Not computed\n")
-            f.write("\n")
-            
-            # Audio Quality Metrics
-            f.write("## Audio Quality Metrics\n\n")
-            if orig_quality and dubbed_quality:
-                f.write("### Original Audio\n")
-                f.write(f"- **Sample Rate**: {orig_quality['sample_rate']}Hz\n")
-                f.write(f"- **RMS Level**: {orig_quality['rms']:.4f}\n")
-                f.write(f"- **Peak Amplitude**: {orig_quality['peak']:.4f}\n")
-                f.write(f"- **Dynamic Range**: {orig_quality['dynamic_range_db']:.2f}dB\n\n")
-                
-                f.write("### Dubbed Audio\n")
-                f.write(f"- **Sample Rate**: {dubbed_quality['sample_rate']}Hz\n")
-                f.write(f"- **RMS Level**: {dubbed_quality['rms']:.4f}\n")
-                f.write(f"- **Peak Amplitude**: {dubbed_quality['peak']:.4f}\n")
-                f.write(f"- **Dynamic Range**: {dubbed_quality['dynamic_range_db']:.2f}dB\n")
-            f.write("\n")
-            
-            # Model Configuration
-            f.write("## Configuration\n\n")
-            f.write(f"- **TTS Model**: {self.config.F5_MODEL} (without voice cloning)\n")
-            f.write(f"- **Voice Conversion**: Seed-VC\n")
-            f.write(f"- **F5-TTS Sample Rate**: {self.config.F5_SAMPLE_RATE}Hz\n")
-            f.write(f"- **Seed-VC Sample Rate**: {self.config.SEED_VC_SAMPLE_RATE}Hz\n")
-            f.write(f"- **Final Sample Rate**: {self.config.FINAL_SAMPLE_RATE}Hz\n")
-            f.write(f"- **Seed-VC Diffusion Steps**: {self.config.SEED_VC_DIFFUSION_STEPS}\n")
-            f.write(f"- **Seed-VC CFG Rate**: {self.config.SEED_VC_CFG_RATE}\n")
-            f.write(f"- **Reference Duration**: {self.config.REF_DURATION}s (starting at {self.config.REF_START_TIME}s)\n")
-            f.write("\n")
-            
-            f.write("## Voice Consistency Settings\n\n")
-            f.write(f"- **Fixed Seed**: {'✅ Enabled' if self.config.USE_FIXED_SEED else '❌ Disabled'}")
-            if self.config.USE_FIXED_SEED:
-                f.write(f" (seed={self.config.FIXED_SEED})")
-            f.write("\n")
-            f.write(f"- **Volume Normalization**: {'✅ Enabled' if self.config.NORMALIZE_VOLUME else '❌ Disabled'}\n")
-            f.write(f"- **Cross-fade**: {self.config.CROSS_FADE_DURATION}s between segments\n")
+                f.write(f"- **Status**: {'✅ PASS' if abs(drift_pct) <= 5 else '❌ FAIL'}\n")
             f.write("\n")
         
         print(f"Evaluation report saved: {report_path}")
