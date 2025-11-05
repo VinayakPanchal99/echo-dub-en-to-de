@@ -5,7 +5,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 import shutil
 
 # Enable MPS fallback for unsupported operations (must be before any torch imports)
@@ -69,6 +69,46 @@ class JobStatus(BaseModel):
 
 # In-memory job status storage (use Redis in production)
 job_status = {}
+
+
+def recover_job_status_from_filesystem(job_id: str) -> Optional[Dict]:
+    """Recover job status from filesystem if job exists but not in memory"""
+    output_dir = OUTPUT_DIR / job_id
+    
+    if not output_dir.exists():
+        return None
+    
+    # Check if output files exist
+    output_video = output_dir / f"{job_id}_dubbed.mp4"
+    output_audio = output_dir / f"{job_id}_dubbed_audio.wav"
+    eval_report = output_dir / f"{job_id}_evaluation_report.md"
+    
+    # If video exists, job is completed
+    if output_video.exists():
+        output_video_rel = f"/app/outputs/{job_id}/{job_id}_dubbed.mp4"
+        output_audio_rel = f"/app/outputs/{job_id}/{job_id}_dubbed_audio.wav" if output_audio.exists() else None
+        eval_report_rel = f"/app/outputs/{job_id}/{job_id}_evaluation_report.md" if eval_report.exists() else None
+        
+        return {
+            "status": "completed",
+            "message": "Pipeline completed successfully (recovered from filesystem)",
+            "output_video": output_video_rel,
+            "output_audio": output_audio_rel,
+            "evaluation_report": eval_report_rel
+        }
+    
+    # Check if upload directory exists (job was created but may still be processing)
+    upload_dir = UPLOAD_DIR / job_id
+    if upload_dir.exists():
+        return {
+            "status": "unknown",
+            "message": "Job found but status unknown (may be processing or failed)",
+            "output_video": None,
+            "output_audio": None,
+            "evaluation_report": None
+        }
+    
+    return None
 
 
 def run_dubbing_pipeline(job_id: str, video_path: Path, srt_path: Path, output_dir: Path):
@@ -236,25 +276,45 @@ async def dub_video(
 @app.get("/status/{job_id}", response_model=JobStatus)
 async def get_status(job_id: str):
     """Get the status of a dubbing job"""
-    if job_id not in job_status:
-        raise HTTPException(status_code=404, detail="Job not found")
+    # Check in-memory status first
+    if job_id in job_status:
+        status = job_status[job_id]
+        return JobStatus(
+            job_id=job_id,
+            status=status["status"],
+            message=status["message"],
+            output_video=status.get("output_video"),
+            output_audio=status.get("output_audio"),
+            evaluation_report=status.get("evaluation_report")
+        )
     
-    status = job_status[job_id]
-    return JobStatus(
-        job_id=job_id,
-        status=status["status"],
-        message=status["message"],
-        output_video=status.get("output_video"),
-        output_audio=status.get("output_audio"),
-        evaluation_report=status.get("evaluation_report")
-    )
+    # Try to recover from filesystem
+    recovered_status = recover_job_status_from_filesystem(job_id)
+    if recovered_status:
+        # Store in memory for future requests
+        job_status[job_id] = recovered_status
+        return JobStatus(
+            job_id=job_id,
+            status=recovered_status["status"],
+            message=recovered_status["message"],
+            output_video=recovered_status.get("output_video"),
+            output_audio=recovered_status.get("output_audio"),
+            evaluation_report=recovered_status.get("evaluation_report")
+        )
+    
+    raise HTTPException(status_code=404, detail="Job not found")
 
 
 @app.get("/download/{job_id}/video")
 async def download_video(job_id: str):
     """Download the dubbed video"""
+    # Check in-memory status or recover from filesystem
     if job_id not in job_status:
-        raise HTTPException(status_code=404, detail="Job not found")
+        recovered_status = recover_job_status_from_filesystem(job_id)
+        if recovered_status:
+            job_status[job_id] = recovered_status
+        else:
+            raise HTTPException(status_code=404, detail="Job not found")
     
     status = job_status[job_id]
     if status["status"] != "completed" or not status.get("output_video"):
@@ -281,8 +341,13 @@ async def download_video(job_id: str):
 @app.get("/download/{job_id}/audio")
 async def download_audio(job_id: str):
     """Download the dubbed audio file"""
+    # Check in-memory status or recover from filesystem
     if job_id not in job_status:
-        raise HTTPException(status_code=404, detail="Job not found")
+        recovered_status = recover_job_status_from_filesystem(job_id)
+        if recovered_status:
+            job_status[job_id] = recovered_status
+        else:
+            raise HTTPException(status_code=404, detail="Job not found")
     
     status = job_status[job_id]
     if status["status"] != "completed" or not status.get("output_audio"):
@@ -309,8 +374,13 @@ async def download_audio(job_id: str):
 @app.get("/download/{job_id}/report")
 async def download_report(job_id: str):
     """Download the evaluation report"""
+    # Check in-memory status or recover from filesystem
     if job_id not in job_status:
-        raise HTTPException(status_code=404, detail="Job not found")
+        recovered_status = recover_job_status_from_filesystem(job_id)
+        if recovered_status:
+            job_status[job_id] = recovered_status
+        else:
+            raise HTTPException(status_code=404, detail="Job not found")
     
     status = job_status[job_id]
     if not status.get("evaluation_report"):
@@ -337,8 +407,13 @@ async def download_report(job_id: str):
 @app.delete("/job/{job_id}")
 async def delete_job(job_id: str):
     """Delete a job and its associated files"""
+    # Check if job exists in memory or filesystem
     if job_id not in job_status:
-        raise HTTPException(status_code=404, detail="Job not found")
+        recovered_status = recover_job_status_from_filesystem(job_id)
+        if not recovered_status:
+            raise HTTPException(status_code=404, detail="Job not found")
+        # If recovered, add to memory for deletion
+        job_status[job_id] = recovered_status
     
     # Remove files
     job_dir = UPLOAD_DIR / job_id
